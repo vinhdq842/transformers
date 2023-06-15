@@ -15,7 +15,7 @@ class Decoder(nn.Module):
         d_ff: int,
         d_k: int,
         d_v: int,
-        dropout: float,
+        p_drop: float,
     ):
         super(
             Decoder,
@@ -25,11 +25,11 @@ class Decoder(nn.Module):
         self.positional_emb = PositionalEncoding(max_length, d_model)
         self.decoder_blocks = nn.ModuleList(
             [
-                DecoderBlock(n_heads, d_model, d_ff, d_k, d_v, dropout)
+                DecoderBlock(n_heads, d_model, d_ff, d_k, d_v, p_drop)
                 for _ in range(n_blocks)
             ]
         )
-        self.dropout = nn.Dropout(p=dropout)
+        self.dropout = nn.Dropout(p=p_drop)
 
     def forward(
         self,

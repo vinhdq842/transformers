@@ -6,14 +6,14 @@ import math
 
 class EncoderBlock(nn.Module):
     def __init__(
-        self, n_heads: int, d_model: int, d_ff: int, d_k: int, d_v: int, dropout: float
+        self, n_heads: int, d_model: int, d_ff: int, d_k: int, d_v: int, p_drop: float
     ):
         super(EncoderBlock, self).__init__()
         self.self_attn = MultiHeadAttention(n_heads, d_model, d_k, d_v)
         self.norm1 = LayerNorm(d_model)
         self.ffn = PointwiseFeedForward(d_model, d_ff)
         self.norm2 = LayerNorm(d_model)
-        self.dropout = nn.Dropout(p=dropout)
+        self.dropout = nn.Dropout(p=p_drop)
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor):
         x = self.norm1(x + self.dropout(self.self_attn(x, x, x, mask)))
@@ -22,16 +22,16 @@ class EncoderBlock(nn.Module):
 
 class DecoderBlock(nn.Module):
     def __init__(
-        self, n_heads: int, d_model: int, d_ff: int, d_k: int, d_v: int, dropout: float
+        self, n_heads: int, d_model: int, d_ff: int, d_k: int, d_v: int, p_drop: float
     ):
         super(DecoderBlock, self).__init__()
-        self.self_masked_attn = MultiHeadAttention(n_heads, d_model, d_k, d_v)
+        self.self_causal_attn = MultiHeadAttention(n_heads, d_model, d_k, d_v)
         self.norm1 = LayerNorm(d_model)
         self.cross_attn = MultiHeadAttention(n_heads, d_model, d_k, d_v)
         self.norm2 = LayerNorm(d_model)
         self.ffn = PointwiseFeedForward(d_model, d_ff)
         self.norm3 = LayerNorm(d_model)
-        self.dropout = nn.Dropout(p=dropout)
+        self.dropout = nn.Dropout(p=p_drop)
 
     def forward(
         self,
@@ -40,7 +40,7 @@ class DecoderBlock(nn.Module):
         src_mask: torch.Tensor,
         tgt_mask: torch.Tensor,
     ):
-        x = self.norm1(x + self.dropout(self.self_masked_attn(x, x, x, tgt_mask)))
+        x = self.norm1(x + self.dropout(self.self_causal_attn(x, x, x, tgt_mask)))
         x = self.norm2(
             x
             + self.dropout(self.cross_attn(x, encoder_output, encoder_output, src_mask))
@@ -68,7 +68,7 @@ class MultiHeadAttention(nn.Module):
             x (torch.Tensor): batch_size x seq_len x d_model
             mask (torch.Tensor): batch_size x 1 x 1 x seq_len
         """
-        bs, seq_len, _ = q.shape
+        bs, seq_len, _ = q.size()
 
         q = (
             self.w_q(q).view(bs, seq_len, self.n_heads, self.d_k).transpose(1, 2)

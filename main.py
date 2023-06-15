@@ -1,9 +1,9 @@
 import torch
-from modules.encoder import Encoder
+from modules.utils import create_sequence_mask, create_subsequent_mask, count_params
 from transformers import Transformer
 
 vocab_size = 1000
-n_heads= 8
+n_heads = 8
 max_length = 512
 n_blocks = 6
 d_model = 512
@@ -11,18 +11,23 @@ d_ff = 2048
 d_k = d_v = d_model // n_heads
 p_drop = 0.1
 
-#encoder = Encoder(vocab_size, n_head, max_length, n_block, d_model, d_ff, d_k, d_v, p_drop)
-#print(encoder)
-
-
 batch_size = 4
-max_seq_length = 20
 
-x = (torch.rand(batch_size, max_seq_length) * vocab_size).to(torch.int64)
-x_mask = torch.ones(batch_size, max_seq_length)
-model = Transformer(vocab_size,n_heads,max_length,n_blocks,d_model,d_ff,d_k,d_v,p_drop)
+x = torch.randint(1, vocab_size, (batch_size, max_length))
+x_lengths = torch.randint(1, max_length, (batch_size,))
+x_mask = create_sequence_mask(x_lengths, max_length=max_length)
+
+y = torch.randint(1, vocab_size, (batch_size, max_length))
+y_lengths = torch.randint(1, max_length, (batch_size,))
+y_mask = create_subsequent_mask(max_length)
+
+
+model = Transformer(
+    vocab_size, n_heads, max_length, n_blocks, d_model, d_ff, d_k, d_v, p_drop
+)
 print(model)
-# print(x)
-# print(x_mask)
+count_params(model)
 
-# print(encoder(x, x_mask))
+logits = model(x, x_mask, y, y_mask)
+print(logits)
+print(logits.size())
