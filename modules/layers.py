@@ -4,16 +4,15 @@ from torch import nn
 
 
 class LayerNorm(nn.Module):
-    def __init__(self, features: int, eps=1e-6):
+    def __init__(self, d_model: int, eps=1e-5):
         super(LayerNorm, self).__init__()
+        self.d_model = d_model
         self.eps = eps
-        self.gamma = nn.Parameter(torch.ones(features))
-        self.beta = nn.Parameter(torch.zeros(features))
+        self.gamma = nn.Parameter(torch.ones(d_model))
+        self.beta = nn.Parameter(torch.zeros(d_model))
 
     def forward(self, x):
-        mean = x.mean(dim=-1, keepdim=True)
-        var = x.var(dim=-1, keepdim=True)
-        return self.gamma * (x - mean) / torch.sqrt(var + self.eps) + self.beta
+        return torch.layer_norm(x, [self.d_model], self.gamma, self.beta, self.eps)
 
 
 class PointwiseFeedForward(nn.Module):
