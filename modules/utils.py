@@ -12,14 +12,15 @@ def create_sequence_mask(lengths: torch.Tensor, max_length=None):
 def create_subsequent_mask(max_length):
     return torch.tril(torch.ones(max_length, max_length)).unsqueeze(0).unsqueeze(0)
 
-def count_params(model:nn.Module):
+
+def count_params(model: nn.Module):
     total = 0
     trainable = 0
-    
+
     for param in model.parameters():
         total += param.numel()
         if param.requires_grad:
             trainable += param.numel()
-    
-    print(f'Total: {total:,} parameters.')
-    print(f'Trainable: {trainable:,} parameters.')
+
+    print(f"Total: {total:,} parameters.")
+    print(f"Trainable: {trainable:,} parameters.")

@@ -1,13 +1,13 @@
 import torch
 from modules.utils import create_sequence_mask, create_subsequent_mask, count_params
-from transformers import Transformer
+from models.transformers import Transformer
 
 vocab_size = 1000
 n_heads = 8
 max_length = 512
 n_blocks = 6
 d_model = 512
-d_ff = 2048
+d_ff = 4 * d_model
 d_k = d_v = d_model // n_heads
 p_drop = 0.1
 
