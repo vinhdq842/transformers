@@ -1,7 +1,6 @@
 import torch
 from torch import nn
 from modules.layers import LayerNorm, PointwiseFeedForward, MultiHeadAttention
-import math
 
 
 class EncoderBlock(nn.Module):
@@ -25,7 +24,7 @@ class DecoderBlock(nn.Module):
         self, n_heads: int, d_model: int, d_ff: int, d_k: int, d_v: int, p_drop: float
     ):
         super(DecoderBlock, self).__init__()
-        self.self_causal_attn = MultiHeadAttention(n_heads, d_model, d_k, d_v)
+        self.causal_self_attn = MultiHeadAttention(n_heads, d_model, d_k, d_v)
         self.norm1 = LayerNorm(d_model)
         self.cross_attn = MultiHeadAttention(n_heads, d_model, d_k, d_v)
         self.norm2 = LayerNorm(d_model)
@@ -40,7 +39,7 @@ class DecoderBlock(nn.Module):
         src_mask: torch.Tensor,
         tgt_mask: torch.Tensor,
     ):
-        x = self.norm1(x + self.dropout(self.self_causal_attn(x, x, x, tgt_mask)))
+        x = self.norm1(x + self.dropout(self.causal_self_attn(x, x, x, tgt_mask)))
         x = self.norm2(
             x
             + self.dropout(self.cross_attn(x, encoder_output, encoder_output, src_mask))

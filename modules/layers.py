@@ -61,13 +61,13 @@ class MultiHeadAttention(nn.Module):
         self.d_k = d_k
         self.d_v = d_v
 
-        self.w_q = nn.Linear(d_model, n_heads * d_k)
-        self.w_k = nn.Linear(d_model, n_heads * d_k)
-        self.w_v = nn.Linear(d_model, n_heads * d_v)
+        self.w_q = nn.Linear(d_model, n_heads * d_k, bias=False)
+        self.w_k = nn.Linear(d_model, n_heads * d_k, bias=False)
+        self.w_v = nn.Linear(d_model, n_heads * d_v, bias=False)
 
-        self.w_o = nn.Linear(n_heads * d_v, d_model)
+        self.w_o = nn.Linear(n_heads * d_v, d_model, bias=False)
 
-    def forward(self, q, k, v, mask=None):
+    def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, mask=None):
         r"""Compute multi-head attention
 
         Args:
@@ -89,10 +89,9 @@ class MultiHeadAttention(nn.Module):
         attn_scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)
 
         if mask is not None:
-            attn_scores = attn_scores.masked_fill(mask == 0, -1e9)
+            attn_scores = attn_scores.masked_fill(mask == 0, float("-inf"))
 
         attn_probs = attn_scores.softmax(dim=-1)
-
         attn_outputs = torch.matmul(attn_probs, v)
 
         return self.w_o(
