@@ -1,6 +1,7 @@
 import torch
 from torch import nn
-from modules.layers import LayerNorm, PointwiseFeedForward, MultiHeadAttention
+
+from modules.layers import LayerNorm, MultiHeadAttention, PointwiseFeedForward
 
 
 class EncoderBlock(nn.Module):

@@ -1,7 +1,8 @@
 import torch
 from torch import nn
-from modules.layers import PositionalEncoding, Embedding
-from modules.blocks import EncoderBlock, DecoderBlock
+
+from modules.blocks import DecoderBlock, EncoderBlock
+from modules.layers import Embedding, PositionalEncoding
 
 
 class Transformer(nn.Module):
