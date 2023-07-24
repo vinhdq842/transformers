@@ -36,10 +36,40 @@ class Transformer(nn.Module):
         )
 
         self.dropout = nn.Dropout(p=p_drop)
-        
-        # weight tying
         self.fc = nn.Linear(d_model, vocab_size)
+        # weight tying
         self.fc.weight = self.embedding.emb.weight
+
+    def encode(self, src: torch.Tensor, src_mask: torch.Tensor):
+        src = self.dropout(self.pos_embedding(self.embedding(src)))
+
+        for encoder in self.encoder_blocks:
+            src = encoder(src, src_mask)
+
+        return src
+
+    def decode(
+        self,
+        tgt: torch.Tensor,
+        tgt_mask: torch.Tensor,
+        encoder_outputs: torch.Tensor,
+        src_mask: torch.Tensor,
+    ):
+        tgt = self.dropout(self.pos_embedding(self.embedding(tgt)))
+
+        for decoder in self.decoder_blocks:
+            tgt = decoder(tgt, tgt_mask, encoder_outputs, src_mask)
+
+        return tgt
+
+    def generate(
+        self,
+        tgt: torch.Tensor,
+        tgt_mask: torch.Tensor,
+        encoder_outputs: torch.Tensor,
+        src_mask: torch.Tensor,
+    ):
+        return self.fc(self.decode(tgt, tgt_mask, encoder_outputs, src_mask))
 
     def forward(
         self,
@@ -48,13 +78,4 @@ class Transformer(nn.Module):
         tgt: torch.Tensor,
         tgt_mask: torch.Tensor,
     ):
-        src = self.dropout(self.pos_embedding(self.embedding(src)))
-        tgt = self.dropout(self.pos_embedding(self.embedding(tgt)))
-
-        for encoder in self.encoder_blocks:
-            src = encoder(src, src_mask)
-
-        for decoder in self.decoder_blocks:
-            tgt = decoder(tgt, src, src_mask, tgt_mask)
-
-        return self.fc(tgt)
+        return self.fc(self.decode(tgt, tgt_mask, self.encode(src, src_mask), src_mask))

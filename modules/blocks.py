@@ -36,13 +36,15 @@ class DecoderBlock(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        encoder_output: torch.Tensor,
+        x_mask: torch.Tensor,
+        encoder_outputs: torch.Tensor,
         src_mask: torch.Tensor,
-        tgt_mask: torch.Tensor,
     ):
-        x = self.norm1(x + self.dropout(self.causal_self_attn(x, x, x, tgt_mask)))
+        x = self.norm1(x + self.dropout(self.causal_self_attn(x, x, x, x_mask)))
         x = self.norm2(
             x
-            + self.dropout(self.cross_attn(x, encoder_output, encoder_output, src_mask))
+            + self.dropout(
+                self.cross_attn(x, encoder_outputs, encoder_outputs, src_mask)
+            )
         )
         return self.norm3(x + self.dropout(self.ffn(x)))

@@ -69,34 +69,43 @@ class MultiHeadAttention(nn.Module):
         self.w_o = nn.Linear(n_heads * d_v, d_model, bias=False)
 
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, mask=None):
-        r"""Compute multi-head attention
+        r"""Compute multi-head attention.
 
         Args:
-            x (torch.Tensor): batch_size x seq_len x d_model
-            mask (torch.Tensor): batch_size x 1 x 1 x seq_len
+            q (torch.Tensor): batch_size x seq_len_q x d_model.
+            k (torch.Tensor): batch_size x seq_len_k x d_model.
+            v (torch.Tensor): batch_size x seq_len_k x d_model.
+            mask (torch.Tensor): batch_size x 1 x 1 x seq_len_k
+            or batch_size x 1 x seq_len_k x seq_len_k.
+
+        Returns:
+            torch.Tensor: batch_size x seq_length_q x d_model.
         """
-        bs, seq_len, _ = q.size()
+        bs, seq_len_q, _ = q.size()
+        _, seq_len_k, _ = k.size()
 
         q = (
-            self.w_q(q).view(bs, seq_len, self.n_heads, self.d_k).transpose(1, 2)
-        )  # bs x n_heads x seq_len x d_k
+            self.w_q(q).view(bs, seq_len_q, self.n_heads, self.d_k).transpose(1, 2)
+        )  # bs x n_heads x seq_len_q x d_k
         k = (
-            self.w_k(k).view(bs, seq_len, self.n_heads, self.d_k).transpose(1, 2)
-        )  # bs x n_heads x seq_len x d_k
+            self.w_k(k).view(bs, seq_len_k, self.n_heads, self.d_k).transpose(1, 2)
+        )  # bs x n_heads x seq_len_k x d_k
         v = (
-            self.w_v(v).view(bs, seq_len, self.n_heads, self.d_v).transpose(1, 2)
-        )  # bs x n_heads x seq_len x d_v
+            self.w_v(v).view(bs, seq_len_k, self.n_heads, self.d_v).transpose(1, 2)
+        )  # bs x n_heads x seq_len_k x d_v
 
-        attn_scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)
+        attn_scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(
+            self.d_k
+        )  # bs x n_heads x seq_len_q x seq_len_k
 
         if mask is not None:
             attn_scores = attn_scores.masked_fill(mask == 0, float("-inf"))
 
         attn_probs = attn_scores.softmax(dim=-1)
-        attn_outputs = torch.matmul(attn_probs, v)
+        attn_outputs = torch.matmul(attn_probs, v)  # bs x n_heads x seq_len_q x d_v
 
         return self.w_o(
             attn_outputs.transpose(1, 2)
             .contiguous()
-            .view(bs, seq_len, self.n_heads * self.d_v)
+            .view(bs, seq_len_q, self.n_heads * self.d_v)
         )
