@@ -3,7 +3,7 @@ from torch import nn
 
 from modules.blocks import EncoderBlock
 from modules.layers import Embedding, PositionalEncoding
-from modules.utils import create_pad_mask
+from utils.helpers import create_pad_mask
 
 
 class EncoderClassifier(nn.Module):

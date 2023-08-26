@@ -1,7 +1,7 @@
 import torch
 
-from models.transformer import Transformer
-from modules.utils import count_params, create_pad_mask, create_subsequent_mask
+from models import Transformer
+from utils.helpers import count_params, create_pad_mask, create_subsequent_mask
 
 vocab_size = 100
 n_heads = 4
@@ -19,9 +19,7 @@ x_mask = create_pad_mask(x_lengths)
 x = torch.randint(1, vocab_size, (batch_size, x_lengths.max()))
 
 y_lengths = torch.randint(1, max_length, (batch_size,))
-y_mask = create_subsequent_mask(
-    y_lengths, pad_mask=create_pad_mask(y_lengths)
-)
+y_mask = create_subsequent_mask(y_lengths, pad_mask=create_pad_mask(y_lengths))
 y = torch.randint(1, vocab_size, (batch_size, y_lengths.max()))
 
 

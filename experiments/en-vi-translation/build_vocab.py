@@ -1,4 +1,4 @@
-import re
+import os
 import sys
 
 import torch
@@ -6,27 +6,11 @@ import torch
 sys.path.append("../../")
 from datasets import load_from_disk
 
-from modules.utils import BPETokenizer
+from utils.tokenizers import BPETokenizer
 
-vi_en_dataset = load_from_disk("datasets/processed")
+vi_en_dataset = load_from_disk("datasets/cleaned")
 
-
-def clean(batch):
-    en = batch["en"].lower()
-    vi = batch["vi"].lower()
-
-    en = re.sub(r"\s+", " ", en).strip()
-    en = " ".join(list(filter(lambda x: len(x), en.split())))
-    batch["en"] = en
-
-    vi = re.sub(r"\s+", " ", vi).strip()
-    vi = " ".join(list(filter(lambda x: len(x), vi.split())))
-    batch["vi"] = vi
-    return batch
-
-
-vi_en_dataset = vi_en_dataset.map(clean)
-
+# this takes a long time to finish
 tokenizer = BPETokenizer(
     vi_en_dataset["train"]["vi"]
     + vi_en_dataset["train"]["en"]
@@ -36,4 +20,5 @@ tokenizer = BPETokenizer(
     lower=True,
 )
 
-torch.save(tokenizer.state_dict(), "tokenizer.pth")
+os.makedirs("tokenizers", exist_ok=True)
+torch.save(tokenizer.state_dict(), "tokenizers/bpe.pth")

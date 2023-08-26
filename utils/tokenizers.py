@@ -1,75 +1,55 @@
-from dataclasses import dataclass
 import re
 from collections import defaultdict
-from typing import Dict, Iterable, List, Tuple, Union
+from typing import Any, Dict, Iterable, List, Tuple, Union
 
-import torch
-from torch import nn
 from tqdm import tqdm
 
 
-def create_pad_mask(lengths: torch.Tensor, max_length=None):
-    r"""Create an attention mask for not attending to PAD tokens.
-
-    Args:
-        lengths (torch.Tensor): tensor of lengths, of shape (batch_size,).
-        max_length (int, optional): maximum length. if None, set to lengths.max().
-
-    Returns:
-        torch.Tensor: mask of shape (batch_size, 1, 1, max_length).
-    """
-    if max_length is None:
-        max_length = lengths.max()
-
-    x = torch.arange(max_length, dtype=lengths.dtype, device=lengths.device)
-
-    return (x.unsqueeze(0) < lengths.unsqueeze(1)).unsqueeze(1).unsqueeze(1)
-
-
-def create_subsequent_mask(lengths: torch.Tensor, max_length=None, pad_mask=None):
-    r"""Create an attention mask for not attending to future tokens
-    (and PAD tokens if a pad_mask is specified).
-
-    Args:
-        lengths (torch.Tensor): tensor of lengths, of shape (batch_size,).
-        max_length (int, optional): maximum length. if None, set to lengths.max().
-        pad_mask (torch.Tensor, optional): pad mask to combine.
-        Defaults to None.
-
-    Returns:
-        torch.Tensor: mask of shape (batch_size, 1, max_length, max_length).
-    """
-    if max_length is None:
-        max_length = lengths.max()
-
-    mask = torch.tril(torch.ones(max_length, max_length) == 1).unsqueeze(0).unsqueeze(0)
-
-    if pad_mask is not None:
-        mask = mask.to(pad_mask.device) & pad_mask
-
-    return mask
-
-
-def count_params(model: nn.Module):
-    total = 0
-    trainable = 0
-
-    for param in model.parameters():
-        total += param.numel()
-        if param.requires_grad:
-            trainable += param.numel()
-
-    print(f"Total: {total:,} parameters.")
-    print(f"Trainable: {trainable:,} parameters.")
-
-
-class BPETokenizer:
-    r"""Byte-Pair Encoding for building shared vocabulary."""
-
+class Tokenizer:
+    r"""Base class for tokenizers"""
     pad = "<pad>"
     sos = "<sos>"
     eos = "<eos>"
     unk = "<unk>"
+
+    def __init__(self):
+        self.special_tokens = [
+            Tokenizer.pad,
+            Tokenizer.sos,
+            Tokenizer.eos,
+            Tokenizer.unk,
+        ]
+        self.vocab = self.special_tokens
+        self._st2i = {}
+        self._i2st = {}
+
+    def build(self, raw_corpus: List[str], target_size=None):
+        raise NotImplementedError
+
+    def tokenize(self, input: Union[str, Iterable[str]]):
+        raise NotImplementedError
+
+    def encode(self, input: Union[List[List[str]], List[str]]):
+        raise NotImplementedError
+
+    def decode(self, input: Union[List[List[int]], List[int]]):
+        raise NotImplementedError
+
+    def state_dict(self):
+        raise NotImplementedError
+
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        raise NotImplementedError
+
+    def __call__(self, input: Union[str, Iterable[str]]):
+        raise NotImplementedError
+
+    def __len__(self):
+        raise NotImplementedError
+
+
+class BPETokenizer(Tokenizer):
+    r"""Byte-Pair Encoding for building shared vocabulary."""
 
     def __init__(
         self,
@@ -77,17 +57,10 @@ class BPETokenizer:
         target_size: int = 100,
         lower: bool = False,
     ):
+        super().__init__()
         self.merges = {}
         self.target_size = target_size
         self.lower = lower
-        self.special_tokens = [
-            BPETokenizer.pad,
-            BPETokenizer.sos,
-            BPETokenizer.eos,
-            BPETokenizer.unk,
-        ]
-
-        self.vocab = self.special_tokens
         self._st2i = {tk: i for i, tk in enumerate(self.vocab)}
         self._i2st = {i: tk for tk, i in self._st2i.items()}
 
@@ -207,7 +180,7 @@ class BPETokenizer:
 
             res.append(
                 [
-                    tk if tk in self._st2i else BPETokenizer.unk
+                    tk if tk in self._st2i else self.unk
                     for tk in sum(
                         splits,
                         [],
@@ -223,10 +196,7 @@ class BPETokenizer:
         ):
             input = [input]
 
-        res = [
-            [self._st2i.get(i, self._st2i[BPETokenizer.unk]) for i in seq]
-            for seq in input
-        ]
+        res = [[self._st2i.get(tk, self._st2i[self.unk]) for tk in seq] for seq in input]
 
         return res[0] if is_single else res
 
@@ -236,7 +206,7 @@ class BPETokenizer:
         ):
             input = [input]
 
-        res = [[self._i2st.get(i, BPETokenizer.unk) for i in seq] for seq in input]
+        res = [[self._i2st.get(tk, self.unk) for tk in seq] for seq in input]
 
         return res[0] if is_single else res
 
@@ -250,7 +220,7 @@ class BPETokenizer:
             "lower": self.lower,
         }
 
-    def load_state_dict(self, state_dict):
+    def load_state_dict(self, state_dict: Dict[str, Any]):
         self.merges = state_dict["merges"]
         self.vocab = state_dict["vocab"]
         self._st2i = state_dict["st2i"]
@@ -258,7 +228,7 @@ class BPETokenizer:
         self.target_size = state_dict["target_size"]
         self.lower = state_dict["lower"]
 
-    def __call__(self, input: Union[List[List[str]], List[str]]):
+    def __call__(self, input: Union[str, Iterable[str]]):
         return self.encode(self.tokenize(input))
 
     def __len__(self):
