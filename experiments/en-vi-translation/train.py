@@ -9,6 +9,7 @@ from torch.optim.lr_scheduler import ExponentialLR
 from torch.utils.data import DataLoader
 
 sys.path.append("../../")
+
 from models import Transformer
 from utils.datasets import TextPairDataCollate, TextPairDataset
 from utils.engine import eval, train_and_val
@@ -41,7 +42,7 @@ def loss_batch_seq2seq(
 
     logits = model(src, src_mask, tgt_0, tgt_0_mask)
 
-    return loss_fn(logits.view(-1, vocab_size), tgt_1), {
+    return loss_fn(logits.view(-1, logits.size(-1)), tgt_1), {
         "bleu": bleu_score(logits.argmax(-1), tgt[:, 1:], tokenizer) * len(batch)
     }
 
@@ -102,9 +103,9 @@ test_dl = DataLoader(
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 vocab_size = len(tokenizer)
-n_heads = 4
-n_blocks = 3
-d_model = 64
+n_heads = 8
+n_blocks = 6
+d_model = 256
 d_k = d_v = d_model // n_heads
 d_ff = 4 * d_model
 p_drop = 0.1
@@ -119,14 +120,12 @@ for p in model.parameters():
 
 count_params(model)
 
-optimizer = Adam(model.parameters(), lr=0.0004, betas=(0.98, 0.99), eps=1e-9)
+optimizer = Adam(model.parameters(), lr=0.0003, betas=(0.98, 0.99), eps=1e-9)
 scheduler = ExponentialLR(optimizer, 0.999**0.125)
-loss_fn = nn.CrossEntropyLoss(
-    label_smoothing=0.1, ignore_index=tokenizer._st2i[tokenizer.pad]
-)
+loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer._st2i[tokenizer.pad])
 
-epochs = 2
-model_name = "translation-64-3-4"
+epochs = 2000
+model_name = f"translation-{d_model}-{n_blocks}-{n_heads}"
 
 training_history, best_val_loss = train_and_val(
     model,

@@ -113,7 +113,7 @@ def seq2seq_decode(
     src_mask = create_pad_mask(src_lens).to(device)
 
     tgt_ids = torch.tensor([[tokenizer._st2i[tokenizer.sos]]]).to(device)
-    tgt_lens = torch.tensor([[1]], dtype=torch.int64)
+    tgt_lens = torch.tensor([1], dtype=torch.int64)
     tgt_mask = create_subsequent_mask(tgt_lens, pad_mask=create_pad_mask(tgt_lens)).to(
         device
     )
