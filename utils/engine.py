@@ -1,23 +1,29 @@
 import os
+from typing import Callable, Dict, List, Tuple, Union
 
 import torch
+from torch import nn
+from torch.optim import optimizer
+from torch.optim.lr_scheduler import LRScheduler
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 
 def train_and_val(
-    model,
-    optimizer,
-    loss_batch,
-    scheduler,
-    epochs,
-    train_dl,
-    val_dl,
-    accum_steps=8,
-    early_stopping=10,
-    model_name="sample_model",
-    infer_one_sample=None,
-    device="cpu",
-):
+    model: nn.Module,
+    optimizer: optimizer.Optimizer,
+    loss_batch: Callable,
+    scheduler: Union[LRScheduler, None],
+    n_epochs: int,
+    train_dl: DataLoader,
+    val_dl: DataLoader,
+    scheduler_step_per: str = "epoch",
+    n_accum_steps: int = 8,
+    early_stopping_patience: int = 10,
+    model_name: str = "sample_model",
+    infer_one_sample: Union[Callable, None] = None,
+    device: str = "cpu",
+) -> Tuple[Dict[str, Dict[str, List]], float]:
     os.makedirs("checkpoints", exist_ok=True)
     training_history = {
         "train": {"loss": [], "metrics": []},
@@ -29,7 +35,7 @@ def train_and_val(
 
     print("Training:")
     p_bar = tqdm(total=len(train_dl))
-    for epoch in range(epochs):
+    for epoch in range(n_epochs):
         train_loss = 0
         val_loss = 0
         train_metrics = {}
@@ -47,23 +53,29 @@ def train_and_val(
                 else:
                     train_metrics[k] = v
 
-            if accum_steps > 1:
-                loss /= accum_steps
+            if n_accum_steps > 1:
+                loss /= n_accum_steps
 
             loss.backward()
 
             step += 1
-            if accum_steps > 1:
-                if step % accum_steps == 0:
+            if n_accum_steps > 1:
+                if step % n_accum_steps == 0:
                     optimizer.step()
                     optimizer.zero_grad(set_to_none=True)
+
+                    if scheduler and scheduler_step_per == "step":
+                        scheduler.step()
             else:
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
 
+                if scheduler and scheduler_step_per == "step":
+                    scheduler.step()
+
             p_bar.update(1)
 
-        if scheduler:
+        if scheduler and scheduler_step_per == "epoch":
             scheduler.step()
 
         model.eval()
@@ -102,13 +114,13 @@ def train_and_val(
         if infer_one_sample:
             print(f"\t{infer_one_sample(model)}")
 
-        if early_stopping > 0:
+        if early_stopping_patience > 0:
             if val_loss > best_val_loss:
                 patience += 1
 
-                if patience >= early_stopping:
+                if patience >= early_stopping_patience:
                     print(
-                        f"\tStopped since val loss has not improved in the last {early_stopping} epochs..."
+                        f"\tStopped since val loss has not improved in the last {early_stopping_patience} epochs..."
                     )
                     break
             else:
@@ -125,7 +137,9 @@ def train_and_val(
     return training_history, best_val_loss
 
 
-def eval(model, loss_batch, test_dl, device="cpu"):
+def eval(
+    model: nn.Module, loss_batch: Callable, test_dl: DataLoader, device: str = "cpu"
+) -> Dict[str, Dict[str, List]]:
     test_loss = 0
     test_metrics = {}
 

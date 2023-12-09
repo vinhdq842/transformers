@@ -5,22 +5,21 @@ import torch
 from datasets import load_from_disk
 from torch import nn
 from torch.optim import Adam
-from torch.optim.lr_scheduler import ExponentialLR
+from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
+
+from transformers import get_linear_schedule_with_warmup
 
 sys.path.append("../../")
 
 from models import Transformer
 from utils.datasets import TextPairDataCollate, TextPairDataset
 from utils.engine import eval, train_and_val
-from utils.helpers import (
-    bleu_score,
-    count_params,
-    create_pad_mask,
-    create_subsequent_mask,
-    seq2seq_decode,
-)
+from utils.helpers import (bleu_score, count_params, create_pad_mask,
+                           create_subsequent_mask, translate_one_sentence)
 from utils.tokenizers import BPETokenizer, Tokenizer
+
+torch.manual_seed(42)
 
 tokenizer = BPETokenizer()
 tokenizer.load_state_dict(torch.load("tokenizers/bpe.pth"))
@@ -45,22 +44,6 @@ def loss_batch_seq2seq(
     return loss_fn(logits.view(-1, logits.size(-1)), tgt_1), {
         "bleu": bleu_score(logits.argmax(-1), tgt[:, 1:], tokenizer) * len(batch)
     }
-
-
-def translate_one_sentence(
-    model: nn.Module,
-    tokenizer: Tokenizer,
-    device: str,
-    sentence: str,
-    max_tokens: int = 20,
-):
-    return "".join(
-        tokenizer.decode(
-            seq2seq_decode(
-                model, tokenizer, sentence, max_tokens=max_tokens, device=device
-            )[0].tolist()
-        )
-    )
 
 
 vi_en_ids = load_from_disk("datasets/processed_ids_splits")
@@ -105,7 +88,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 vocab_size = len(tokenizer)
 n_heads = 8
 n_blocks = 6
-d_model = 256
+d_model = 384
 d_k = d_v = d_model // n_heads
 d_ff = 4 * d_model
 p_drop = 0.1
@@ -120,11 +103,19 @@ for p in model.parameters():
 
 count_params(model)
 
-optimizer = Adam(model.parameters(), lr=0.0003, betas=(0.98, 0.99), eps=1e-9)
-scheduler = ExponentialLR(optimizer, 0.999**0.125)
+n_epochs = 1000
+n_accum_steps = 8
+optimizer = Adam(model.parameters(), lr=0.0004, betas=(0.98, 0.99), eps=1e-9)
+n_warmup_steps = 5000
+# scheduler = LambdaLR(
+#    optimizer,
+#    lr_lambda=lambda x: min(max(x, 1) ** -0.5, max(x, 1) * warmup_steps**-1.5),
+# )
+scheduler = get_linear_schedule_with_warmup(
+    optimizer, n_warmup_steps, n_epochs * len(train_dl) / n_accum_steps
+)
 loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer._st2i[tokenizer.pad])
 
-epochs = 2000
 model_name = f"translation-{d_model}-{n_blocks}-{n_heads}"
 
 training_history, best_val_loss = train_and_val(
@@ -132,9 +123,10 @@ training_history, best_val_loss = train_and_val(
     optimizer,
     lambda batch, model, device: loss_batch_seq2seq(batch, model, device, loss_fn),
     scheduler,
-    epochs,
+    n_epochs,
     train_dl,
     val_dl,
+    n_accum_steps=8,
     model_name=model_name,
     infer_one_sample=lambda m: translate_one_sentence(
         m,
@@ -143,6 +135,7 @@ training_history, best_val_loss = train_and_val(
         "Once upon a day, he met her, but didn't know that the girl would change his entire life.",
     ),
     device=device,
+    scheduler_step_per="step",
 )
 
 model.load_state_dict(torch.load(f"checkpoints/{model_name}.pth"))

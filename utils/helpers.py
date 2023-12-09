@@ -105,7 +105,14 @@ def seq2seq_decode(
     src: str,
     max_tokens: int = 30,
     device: str = "cpu",
+    do_sample: bool = False,
+    temperature: float = 1.0,
 ):
+    if do_sample:
+        assert (
+            0 < temperature <= 2.0
+        ), f"`temperature` must be between 0 and 2.0, received {temperature}"
+
     model.to(device)
 
     src_ids = torch.tensor([tokenizer(src)]).to(device)
@@ -123,7 +130,15 @@ def seq2seq_decode(
         encoder_outputs = model.encode(src_ids, src_mask)
         while tgt_ids[0][-1] != tokenizer._st2i[tokenizer.eos] and max_tokens > 0:
             next = model.generate(tgt_ids, tgt_mask, encoder_outputs, src_mask)
-            tgt_ids = torch.cat((tgt_ids, next[:, -1].argmax(-1, keepdim=True)), dim=-1)
+
+            if do_sample:
+                next_id = (
+                    (next[:, -1] / temperature).softmax(-1).multinomial(num_samples=1)
+                )
+            else:
+                next_id = next[:, -1].argmax(-1, keepdim=True)
+
+            tgt_ids = torch.cat((tgt_ids, next_id), dim=-1)
             tgt_lens += 1
             tgt_mask = create_subsequent_mask(
                 tgt_lens, pad_mask=create_pad_mask(tgt_lens)
@@ -131,3 +146,27 @@ def seq2seq_decode(
             max_tokens -= 1
 
     return tgt_ids
+
+
+def translate_one_sentence(
+    model: nn.Module,
+    tokenizer: Tokenizer,
+    device: str,
+    sentence: str,
+    max_tokens: int = 20,
+    do_sample: bool = False,
+    temperature: float = 1.0,
+):
+    return "".join(
+        tokenizer.decode(
+            seq2seq_decode(
+                model,
+                tokenizer,
+                sentence,
+                max_tokens=max_tokens,
+                device=device,
+                do_sample=do_sample,
+                temperature=temperature,
+            )[0].tolist()
+        )
+    )
