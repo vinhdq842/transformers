@@ -1,2 +1,1 @@
-from models.encoder_classifier import EncoderClassifier
-from models.transformer import Transformer
+from models.transformer import Transformer, VanillaTransformerArgs

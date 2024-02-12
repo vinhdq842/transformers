@@ -1,5 +1,6 @@
 import os
-from typing import Callable, Dict, List, Tuple, Union
+from dataclasses import dataclass
+from typing import Callable, Dict, List, Literal, Tuple, Union
 
 import torch
 from torch import nn
@@ -9,20 +10,27 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 
+@dataclass
+class TrainingArgs:
+    loss_batch: Callable
+    train_dl: DataLoader
+    val_dl: DataLoader
+    test_dl: Union[DataLoader, None] = None
+    n_epochs: int = 1
+    scheduler_step_per: Literal["epoch", "step"] = "epoch"
+    n_accum_steps: int = 8
+    early_stopping_patience: int = 10
+    n_warmup_steps: int = 5000
+    device: str = "cpu"
+
+
 def train_and_val(
     model: nn.Module,
     optimizer: optimizer.Optimizer,
-    loss_batch: Callable,
     scheduler: Union[LRScheduler, None],
-    n_epochs: int,
-    train_dl: DataLoader,
-    val_dl: DataLoader,
-    scheduler_step_per: str = "epoch",
-    n_accum_steps: int = 8,
-    early_stopping_patience: int = 10,
+    args: TrainingArgs,
     model_name: str = "sample_model",
     infer_one_sample: Union[Callable, None] = None,
-    device: str = "cpu",
 ) -> Tuple[Dict[str, Dict[str, List]], float]:
     os.makedirs("checkpoints", exist_ok=True)
     training_history = {
@@ -34,16 +42,16 @@ def train_and_val(
     step = 0
 
     print("Training:")
-    p_bar = tqdm(total=len(train_dl))
-    for epoch in range(n_epochs):
+    p_bar = tqdm(total=len(args.train_dl))
+    for epoch in range(args.n_epochs):
         train_loss = 0
         val_loss = 0
         train_metrics = {}
         val_metrics = {}
 
         model.train()
-        for batch in train_dl:
-            loss, mt = loss_batch(batch, model, device)
+        for batch in args.train_dl:
+            loss, mt = args.loss_batch(batch, model, args.device)
 
             train_loss += loss.item()
 
@@ -53,35 +61,35 @@ def train_and_val(
                 else:
                     train_metrics[k] = v
 
-            if n_accum_steps > 1:
-                loss /= n_accum_steps
+            if args.n_accum_steps > 1:
+                loss /= args.n_accum_steps
 
             loss.backward()
 
             step += 1
-            if n_accum_steps > 1:
-                if step % n_accum_steps == 0:
+            if args.n_accum_steps > 1:
+                if step % args.n_accum_steps == 0:
                     optimizer.step()
                     optimizer.zero_grad(set_to_none=True)
 
-                    if scheduler and scheduler_step_per == "step":
+                    if scheduler and args.scheduler_step_per == "step":
                         scheduler.step()
             else:
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
 
-                if scheduler and scheduler_step_per == "step":
+                if scheduler and args.scheduler_step_per == "step":
                     scheduler.step()
 
             p_bar.update(1)
 
-        if scheduler and scheduler_step_per == "epoch":
+        if scheduler and args.scheduler_step_per == "epoch":
             scheduler.step()
 
         model.eval()
         with torch.inference_mode():
-            for batch in val_dl:
-                loss, mt = loss_batch(batch, model, device)
+            for batch in args.val_dl:
+                loss, mt = args.loss_batch(batch, model, args.device)
 
                 val_loss += loss.item()
 
@@ -91,12 +99,12 @@ def train_and_val(
                     else:
                         val_metrics[k] = v
 
-        train_loss /= len(train_dl)
-        val_loss /= len(val_dl)
+        train_loss /= len(args.train_dl)
+        val_loss /= len(args.val_dl)
 
         for k in train_metrics.keys():
-            train_metrics[k] /= len(train_dl.dataset)
-            val_metrics[k] /= len(val_dl.dataset)
+            train_metrics[k] /= len(args.train_dl.dataset)
+            val_metrics[k] /= len(args.val_dl.dataset)
 
         training_history["train"]["loss"].append(train_loss)
         training_history["train"]["metrics"].append(train_metrics)
@@ -114,13 +122,13 @@ def train_and_val(
         if infer_one_sample:
             print(f"\t{infer_one_sample(model)}")
 
-        if early_stopping_patience > 0:
+        if args.early_stopping_patience > 0:
             if val_loss > best_val_loss:
                 patience += 1
 
-                if patience >= early_stopping_patience:
+                if patience >= args.early_stopping_patience:
                     print(
-                        f"\tStopped since val loss has not improved in the last {early_stopping_patience} epochs..."
+                        f"\tStopped since val loss has not improved in the last {args.early_stopping_patience} epochs..."
                     )
                     break
             else:

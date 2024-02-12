@@ -7,6 +7,7 @@ from tqdm import tqdm
 
 class Tokenizer:
     r"""Base class for tokenizers"""
+
     pad = "<pad>"
     sos = "<sos>"
     eos = "<eos>"
@@ -196,7 +197,9 @@ class BPETokenizer(Tokenizer):
         ):
             input = [input]
 
-        res = [[self._st2i.get(tk, self._st2i[self.unk]) for tk in seq] for seq in input]
+        res = [
+            [self._st2i.get(tk, self._st2i[self.unk]) for tk in seq] for seq in input
+        ]
 
         return res[0] if is_single else res
 

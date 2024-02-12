@@ -5,22 +5,22 @@ from torch import nn
 
 
 class LayerNorm(nn.Module):
-    def __init__(self, d_model: int, eps=1e-5):
+    def __init__(self, d_model: int, bias: bool, eps=1e-5):
         super(LayerNorm, self).__init__()
         self.d_model = d_model
         self.eps = eps
         self.gamma = nn.Parameter(torch.ones(d_model))
-        self.beta = nn.Parameter(torch.zeros(d_model))
+        self.beta = nn.Parameter(torch.zeros(d_model)) if bias else None
 
     def forward(self, x):
         return torch.layer_norm(x, [self.d_model], self.gamma, self.beta, self.eps)
 
 
 class PointwiseFeedForward(nn.Module):
-    def __init__(self, d_model: int, d_ff: int):
+    def __init__(self, d_model: int, d_ff: int, bias: bool):
         super(PointwiseFeedForward, self).__init__()
-        self.w_1 = nn.Linear(d_model, d_ff)
-        self.w_2 = nn.Linear(d_ff, d_model)
+        self.w_1 = nn.Linear(d_model, d_ff, bias=bias)
+        self.w_2 = nn.Linear(d_ff, d_model, bias=bias)
 
     def forward(self, x):
         return self.w_2(torch.relu(self.w_1(x)))

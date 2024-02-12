@@ -5,24 +5,42 @@ import torch
 from datasets import load_from_disk
 from torch import nn
 from torch.optim import Adam
-from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 
 from transformers import get_linear_schedule_with_warmup
 
 sys.path.append("../../")
 
-from models import Transformer
+from models import Transformer, VanillaTransformerArgs
 from utils.datasets import TextPairDataCollate, TextPairDataset
-from utils.engine import eval, train_and_val
-from utils.helpers import (bleu_score, count_params, create_pad_mask,
-                           create_subsequent_mask, translate_one_sentence)
-from utils.tokenizers import BPETokenizer, Tokenizer
+from utils.trainer import TrainingArgs, eval, train_and_val
+from utils.helpers import (
+    bleu_score,
+    count_params,
+    create_pad_mask,
+    create_subsequent_mask,
+    translate_one_sentence,
+)
+from utils.tokenizers import BPETokenizer
 
 torch.manual_seed(42)
 
 tokenizer = BPETokenizer()
-tokenizer.load_state_dict(torch.load("tokenizers/bpe.pth"))
+tokenizer.load_state_dict(torch.load("tokenizers/bpe-20k.pth"))
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+model_args = VanillaTransformerArgs(
+    vocab_size=len(tokenizer),
+    n_heads=4,
+    n_blocks=4,
+    d_model=128,
+    d_ff=4 * 128,
+    d_k=128 // 4,
+    d_v=128 // 4,
+    max_length=256,
+    p_drop=0.1,
+    bias=False,
+)
 
 
 def loss_batch_seq2seq(
@@ -46,56 +64,52 @@ def loss_batch_seq2seq(
     }
 
 
-vi_en_ids = load_from_disk("datasets/processed_ids_splits")
-
-max_length = 256
-
+vi_en_ids = load_from_disk("datasets/processed_ids_splits_20k")
 vi_en_ids = vi_en_ids.filter(
-    lambda batch: 2 < len(batch["ids_vi"]) <= max_length
-    and 1 <= len(batch["ids_en"]) <= max_length
+    lambda batch: 2 < len(batch["ids_vi"]) <= model_args.max_length
+    and 1 <= len(batch["ids_en"]) <= model_args.max_length
 )
 
 tp_collate = TextPairDataCollate(tokenizer)
-
 batch_size = 32
 
-train_dl = DataLoader(
-    TextPairDataset(vi_en_ids["train"]["ids_en"], vi_en_ids["train"]["ids_vi"]),
-    batch_size=batch_size,
-    pin_memory=True,
-    shuffle=True,
-    collate_fn=tp_collate,
+training_args = TrainingArgs(
+    loss_batch=lambda batch, model, device: loss_batch_seq2seq(
+        batch,
+        model,
+        device,
+        nn.CrossEntropyLoss(ignore_index=tokenizer._st2i[tokenizer.pad]),
+    ),
+    train_dl=DataLoader(
+        TextPairDataset(vi_en_ids["train"]["ids_en"], vi_en_ids["train"]["ids_vi"]),
+        batch_size=batch_size,
+        pin_memory=True,
+        shuffle=True,
+        collate_fn=tp_collate,
+    ),
+    val_dl=DataLoader(
+        TextPairDataset(vi_en_ids["val"]["ids_en"], vi_en_ids["val"]["ids_vi"]),
+        batch_size=batch_size,
+        pin_memory=True,
+        shuffle=False,
+        collate_fn=tp_collate,
+    ),
+    test_dl=DataLoader(
+        TextPairDataset(vi_en_ids["test"]["ids_en"], vi_en_ids["test"]["ids_vi"]),
+        batch_size=batch_size,
+        pin_memory=True,
+        shuffle=False,
+        collate_fn=tp_collate,
+    ),
+    n_epochs=1000,
+    scheduler_step_per="step",
+    n_accum_steps=8,
+    n_warmup_steps=5000,
+    device=device,
 )
 
-val_dl = DataLoader(
-    TextPairDataset(vi_en_ids["val"]["ids_en"], vi_en_ids["val"]["ids_vi"]),
-    batch_size=batch_size,
-    pin_memory=True,
-    shuffle=False,
-    collate_fn=tp_collate,
-)
 
-test_dl = DataLoader(
-    TextPairDataset(vi_en_ids["test"]["ids_en"], vi_en_ids["test"]["ids_vi"]),
-    batch_size=batch_size,
-    pin_memory=True,
-    shuffle=False,
-    collate_fn=tp_collate,
-)
-
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-vocab_size = len(tokenizer)
-n_heads = 8
-n_blocks = 6
-d_model = 384
-d_k = d_v = d_model // n_heads
-d_ff = 4 * d_model
-p_drop = 0.1
-
-model = Transformer(
-    vocab_size, n_heads, max_length, n_blocks, d_model, d_ff, d_k, d_v, p_drop
-).to(device)
+model = Transformer(model_args).to(device)
 
 for p in model.parameters():
     if p.dim() > 1:
@@ -107,41 +121,32 @@ n_epochs = 1000
 n_accum_steps = 8
 optimizer = Adam(model.parameters(), lr=0.0004, betas=(0.98, 0.99), eps=1e-9)
 n_warmup_steps = 5000
-# scheduler = LambdaLR(
-#    optimizer,
-#    lr_lambda=lambda x: min(max(x, 1) ** -0.5, max(x, 1) * warmup_steps**-1.5),
-# )
 scheduler = get_linear_schedule_with_warmup(
-    optimizer, n_warmup_steps, n_epochs * len(train_dl) / n_accum_steps
+    optimizer,
+    training_args.n_warmup_steps,
+    training_args.n_epochs * len(training_args.train_dl) / training_args.n_accum_steps,
 )
-loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer._st2i[tokenizer.pad])
 
-model_name = f"translation-{d_model}-{n_blocks}-{n_heads}"
+model_name = f"translation-{model_args.d_model}-{model_args.n_blocks}-{model_args.n_heads}-{model_args.vocab_size//1000}k"
 
 training_history, best_val_loss = train_and_val(
     model,
     optimizer,
-    lambda batch, model, device: loss_batch_seq2seq(batch, model, device, loss_fn),
     scheduler,
-    n_epochs,
-    train_dl,
-    val_dl,
-    n_accum_steps=8,
+    training_args,
     model_name=model_name,
     infer_one_sample=lambda m: translate_one_sentence(
         m,
         tokenizer,
         device,
-        "Once upon a day, he met her, but didn't know that the girl would change his entire life.",
+        "Once upon a day , he met her , but did n't know that the girl would change his entire life .",
     ),
-    device=device,
-    scheduler_step_per="step",
 )
 
 model.load_state_dict(torch.load(f"checkpoints/{model_name}.pth"))
 eval_history = eval(
     model,
-    lambda batch, model, device: loss_batch_seq2seq(batch, model, device, loss_fn),
-    test_dl,
+    training_args.loss_batch,
+    training_args.test_dl,
     device=device,
 )
