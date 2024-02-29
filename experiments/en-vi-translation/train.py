@@ -13,7 +13,6 @@ sys.path.append("../../")
 
 from models import Transformer, VanillaTransformerArgs
 from utils.datasets import TextPairDataCollate, TextPairDataset
-from utils.trainer import TrainingArgs, eval, train_and_val
 from utils.helpers import (
     bleu_score,
     count_params,
@@ -22,6 +21,7 @@ from utils.helpers import (
     translate_one_sentence,
 )
 from utils.tokenizers import BPETokenizer
+from utils.trainer import TrainingArgs, eval, train_and_val
 
 torch.manual_seed(42)
 
