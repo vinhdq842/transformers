@@ -1,4 +1,5 @@
 import re
+import warnings
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Tuple, Union
 
@@ -6,7 +7,7 @@ from tqdm import tqdm
 
 
 class Tokenizer:
-    r"""Base class for tokenizers"""
+    r"""Base class for tokenizers."""
 
     pad = "<pad>"
     sos = "<sos>"
@@ -14,26 +15,26 @@ class Tokenizer:
     unk = "<unk>"
 
     def __init__(self):
-        self.special_tokens = [
-            Tokenizer.pad,
-            Tokenizer.sos,
-            Tokenizer.eos,
-            Tokenizer.unk,
-        ]
-        self.vocab = self.special_tokens
-        self._st2i = {}
-        self._i2st = {}
+        self.special_tokens = {
+            Tokenizer.pad: 0,
+            Tokenizer.sos: 1,
+            Tokenizer.eos: 2,
+            Tokenizer.unk: 3,
+        }
+        self.inverse_special_tokens = {v: k for k, v in self.special_tokens.items()}
+        self.vocab = {}
+
+    def register_special_tokens(self, special_tokens: Dict[str, int]):
+        self.special_tokens.update(special_tokens)
+        self.inverse_special_tokens = {v: k for k, v in self.special_tokens.items()}
 
     def build(self, raw_corpus: List[str], target_size=None):
         raise NotImplementedError
 
-    def tokenize(self, input: Union[str, Iterable[str]]):
+    def encode(self, input: str):
         raise NotImplementedError
 
-    def encode(self, input: Union[List[List[str]], List[str]]):
-        raise NotImplementedError
-
-    def decode(self, input: Union[List[List[int]], List[int]]):
+    def decode(self, input: List[int]):
         raise NotImplementedError
 
     def state_dict(self):
@@ -42,11 +43,20 @@ class Tokenizer:
     def load_state_dict(self, state_dict: Dict[str, Any]):
         raise NotImplementedError
 
-    def __call__(self, input: Union[str, Iterable[str]]):
-        raise NotImplementedError
+    def __call__(
+        self, input: Union[str, Iterable[str]]
+    ) -> Union[List[int], List[List[str]]]:
+        if single := isinstance(input, str):
+            input = [input]
+
+        res = []
+        for inp in input:
+            res.append(self.encode(inp))
+
+        return res[0] if single else res
 
     def __len__(self):
-        raise NotImplementedError
+        return len(self.vocab) + len(self.special_tokens)
 
 
 class BPETokenizer(Tokenizer):
@@ -54,185 +64,160 @@ class BPETokenizer(Tokenizer):
 
     def __init__(
         self,
-        raw_corpus: List[str] = None,
-        target_size: int = 100,
         lower: bool = False,
+        split_pattern: str = r"\s?[^\s]+|\s*[\r\n]|\s+(?!\S)|\s+",
     ):
         super().__init__()
-        self.merges = {}
-        self.target_size = target_size
         self.lower = lower
-        self._st2i = {tk: i for i, tk in enumerate(self.vocab)}
-        self._i2st = {i: tk for tk, i in self._st2i.items()}
+        self.split_pattern = split_pattern
+        self.merges = {}
+        self.inverse_vocab = {}
 
-        if raw_corpus is not None:
-            self.build(raw_corpus)
+    def _compute_pair_freqs(self, text: List[str], freqs=None):
+        if freqs is None:
+            freqs = defaultdict(int)
 
-    def _compute_token_freqs(self, corpus: List[List[str]]):
-        freqs = defaultdict(int)
-        for text in corpus:
-            for token in text:
-                freqs[token] += 1
+        for p1, p2 in zip(text, text[1:]):
+            freqs[(p1, p2)] += 1
 
         return freqs
 
-    def _create_initial_vocab(self, token_freqs: Dict[str, int]):
-        vocab = set()
-        for token in token_freqs.keys():
-            vocab.update(list(token))
-
-        return self.special_tokens + sorted(list(vocab))
-
-    def _pretokenize(self, raw_corpus: List[str]) -> List[List[str]]:
+    def _pretokenize(self, raw_text: str) -> List[List[str]]:
+        r"""Split the text into separated chunks and turn each chunk into characters."""
         res = []
-        for text in raw_corpus:
-            text = re.sub(r"\s+", " ", text).strip()
+        for text in re.findall(self.split_pattern, raw_text):
             if self.lower:
                 text = text.lower()
 
-            res.append(re.findall(r"\s?[^\s]+", text))
+            res.append(list(text))
 
         return res
 
-    def _best_pair(
-        self, token_freqs: Dict[str, int], splits: Dict[str, List[str]]
-    ) -> Tuple[str, str]:
-        pair_freqs = defaultdict(int)
-        max_freq = 0
-        best_pair = (None, None)
+    def _merge_pair(self, pair: Tuple[str, str], chars: List[str]):
+        i = 0
+        while i < len(chars) - 1:
+            if (chars[i], chars[i + 1]) == pair:
+                chars = chars[:i] + [chars[i] + chars[i + 1]] + chars[i + 2 :]
+            else:
+                i += 1
 
-        for token, freq in token_freqs.items():
-            split = splits[token]
-            if len(split) == 1:
-                continue
+        return chars
 
-            for i in range(len(split) - 1):
-                pair_freqs[(split[i], split[i + 1])] += freq
-                freq_ = pair_freqs[(split[i], split[i + 1])]
-                if freq_ > max_freq:
-                    max_freq = freq_
-                    best_pair = (split[i], split[i + 1])
+    def build(self, raw_corpus: List[str], target_size: int, verbose: bool = False):
+        assert target_size > len(self)
 
-        return best_pair
+        raw_text = "\n".join(raw_corpus)
+        corpus = self._pretokenize(raw_text)
 
-    def _merge_pair(
-        self, a: str, b: str, token_freqs: Dict[str, int], splits: Dict[str, List[str]]
-    ):
-        for token in token_freqs.keys():
-            split = splits[token]
-
-            if len(split) == 1:
-                continue
-
-            i = 0
-            while i < len(split) - 1:
-                if (a, b) == (split[i], split[i + 1]):
-                    split = split[:i] + [a + b] + split[i + 2 :]
-                else:
-                    i += 1
-            splits[token] = split
-
-        return splits
-
-    def build(self, raw_corpus: List[str], target_size=None):
-        corpus = self._pretokenize(raw_corpus)
-        token_freqs = self._compute_token_freqs(corpus)
-        self.vocab = self._create_initial_vocab(token_freqs)
-        splits = {token: [st for st in token] for token in token_freqs.keys()}
-
-        if target_size is None:
-            target_size = self.target_size
+        for c in list(set(raw_text))[:target_size]:
+            self.vocab[len(self)] = c
 
         pbar = tqdm(
-            desc="Building vocabulary...", initial=len(self.vocab), total=target_size
+            desc="Building vocabulary...",
+            initial=len(self),
+            total=target_size,
+            disable=not verbose,
         )
 
-        while len(self.vocab) < target_size:
-            best_pair = self._best_pair(token_freqs, splits)
-            if best_pair == (None, None):
+        while len(self) < target_size:
+            pair_freqs = defaultdict(int)
+            for chunk in corpus:
+                self._compute_pair_freqs(chunk, pair_freqs)
+            if len(pair_freqs):
+                best_pair = max(pair_freqs, key=pair_freqs.get)
+
+                self.merges[best_pair] = len(self)
+                self.vocab[len(self)] = best_pair[0] + best_pair[1]
+                corpus = [self._merge_pair(best_pair, p) for p in corpus]
+                pbar.update(1)
+            else:
+                warnings.warn("Not enough pair to merge. Stopping...")
                 break
-            self.vocab.append(best_pair[0] + best_pair[1])
-            self.merges[best_pair] = best_pair[0] + best_pair[1]
-            splits = self._merge_pair(*best_pair, token_freqs, splits)
-            pbar.update(1)
 
-        self._st2i = {tk: i for i, tk in enumerate(self.vocab)}
-        self._i2st = {i: tk for tk, i in self._st2i.items()}
+        self.inverse_vocab = {v: k for k, v in self.vocab.items()}
 
-    def tokenize(self, input: Union[str, Iterable[str]]):
-        if is_str := isinstance(input, str):
-            input = [input]
+    def _encode_chunk(self, chars: List[str]) -> List[int]:
+        while len(chars) >= 2:
+            stats = self._compute_pair_freqs(chars)
+            pair = min(stats, key=lambda p: self.merges.get(p, float("inf")))
 
-        res = []
-        input = self._pretokenize(input)
+            if pair not in self.merges:
+                break
+            chars = self._merge_pair(pair, chars)
 
-        for text in input:
-            splits = [list(token) for token in text]
+        return [self.inverse_vocab.get(c, self.special_tokens[self.unk]) for c in chars]
 
-            for pair, merge in self.merges.items():
-                for idx, split in enumerate(splits):
-                    i = 0
-                    while i < len(split) - 1:
-                        if (split[i], split[i + 1]) == pair:
-                            split = split[:i] + [merge] + split[i + 2 :]
-                        else:
-                            i += 1
-                    splits[idx] = split
+    def _encode(self, text: str) -> List[int]:
+        chunks = re.findall(self.split_pattern, text)
+        ids = []
+        for chunk in chunks:
+            ids.extend(self._encode_chunk(list(chunk)))
 
-            res.append(
-                [
-                    tk if tk in self._st2i else self.unk
-                    for tk in sum(
-                        splits,
-                        [],
-                    )
-                ]
-            )
+        return ids
 
-        return res[0] if is_str else res
+    def encode(self, text: str) -> List[int]:
+        special_pattern = (
+            "(" + "|".join(re.escape(s) for s in self.special_tokens) + ")"
+        )
+        chunks = re.split(special_pattern, text)
 
-    def encode(self, input: Union[List[List[str]], List[str]]):
-        if is_single := isinstance(input, list) and (
-            not len(input) or isinstance(input[0], str)
-        ):
-            input = [input]
+        ids = []
+        for chunk in chunks:
+            if chunk in self.special_tokens:
+                ids.append(self.special_tokens[chunk])
+            else:
+                ids.extend(self._encode(chunk))
 
-        res = [
-            [self._st2i.get(tk, self._st2i[self.unk]) for tk in seq] for seq in input
-        ]
+        return ids
 
-        return res[0] if is_single else res
+    def decode(self, input: List[int]) -> str:
+        tokens = []
+        for token in input:
+            if token in self.inverse_special_tokens:
+                tokens.append(self.inverse_special_tokens[token])
+            elif token in self.vocab:
+                tokens.append(self.vocab[token])
+            else:
+                raise ValueError(f"Invalid token id: {token}")
 
-    def decode(self, input: Union[List[List[int]], List[int]]):
-        if is_single := isinstance(input, list) and (
-            not len(input) or isinstance(input[0], int)
-        ):
-            input = [input]
-
-        res = [[self._i2st.get(tk, self.unk) for tk in seq] for seq in input]
-
-        return res[0] if is_single else res
+        return "".join(tokens)
 
     def state_dict(self):
         return {
             "merges": self.merges,
             "vocab": self.vocab,
-            "st2i": self._st2i,
-            "i2st": self._i2st,
-            "target_size": self.target_size,
             "lower": self.lower,
+            "special_tokens": self.special_tokens,
+            "split_pattern": self.split_pattern,
         }
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
         self.merges = state_dict["merges"]
         self.vocab = state_dict["vocab"]
-        self._st2i = state_dict["st2i"]
-        self._i2st = state_dict["i2st"]
-        self.target_size = state_dict["target_size"]
         self.lower = state_dict["lower"]
+        self.special_tokens = state_dict["special_tokens"]
+        self.split_pattern = state_dict["split_pattern"]
 
-    def __call__(self, input: Union[str, Iterable[str]]):
-        return self.encode(self.tokenize(input))
+        self.inverse_special_tokens = {v: k for k, v in self.special_tokens.items()}
+        self.inverse_vocab = {v: k for k, v in self.vocab.items()}
 
-    def __len__(self):
-        return len(self.vocab)
+
+class ByteLevelBPETokenizer(Tokenizer):
+    r"""Byte-level Byte-Pair Encoding Tokenizer for shared vocabulary."""
+
+    def __init__(self): ...
+
+    def build(self, raw_corpus: List[str], target_size=None):
+        raise NotImplementedError
+
+    def encode(self, input: Union[List[List[str]], List[str]]):
+        raise NotImplementedError
+
+    def decode(self, input: Union[List[List[int]], List[int]]):
+        raise NotImplementedError
+
+    def state_dict(self):
+        raise NotImplementedError
+
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        raise NotImplementedError

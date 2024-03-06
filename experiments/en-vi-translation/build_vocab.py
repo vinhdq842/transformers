@@ -11,14 +11,14 @@ from utils.tokenizers import BPETokenizer
 vi_en_dataset = load_from_disk("datasets/cleaned")
 
 # this takes a long time to finish, ~ hours
-tokenizer = BPETokenizer(
+tokenizer = BPETokenizer(lower=True)
+tokenizer.build(
     vi_en_dataset["train"]["vi"]
     + vi_en_dataset["train"]["en"]
     + vi_en_dataset["test"]["vi"]
     + vi_en_dataset["test"]["en"],
     target_size=20000,
-    lower=True,
+    verbose=True,
 )
-
 os.makedirs("tokenizers", exist_ok=True)
 torch.save(tokenizer.state_dict(), "tokenizers/bpe-20k.pth")
