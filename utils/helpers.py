@@ -42,10 +42,14 @@ def create_subsequent_mask(lengths: torch.Tensor, max_length=None, pad_mask=None
     if max_length is None:
         max_length = lengths.max()
 
-    mask = torch.tril(torch.ones(max_length, max_length) == 1).unsqueeze(0).unsqueeze(0)
+    mask = (
+        torch.tril(torch.ones(max_length, max_length, device=lengths.device) == 1)
+        .unsqueeze(0)
+        .unsqueeze(0)
+    )
 
     if pad_mask is not None:
-        mask = mask.to(pad_mask.device) & pad_mask
+        mask = mask & pad_mask
 
     return mask
 
@@ -89,46 +93,48 @@ def bleu_score(
     for candidate, reference in zip(candidates, references):
         if not isinstance(candidate, list) or not isinstance(reference, list):
             candidate, reference = candidate.tolist(), reference.tolist()
-        if tokenizer._st2i[tokenizer.eos] in candidate:
-            candidate = candidate[: candidate.index(tokenizer._st2i[tokenizer.eos]) + 1]
-        if tokenizer._st2i[tokenizer.eos] in reference:
-            reference = reference[: reference.index(tokenizer._st2i[tokenizer.eos]) + 1]
+        if tokenizer.special_tokens[tokenizer.EOS] in candidate:
+            candidate = candidate[
+                : candidate.index(tokenizer.special_tokens[tokenizer.EOS]) + 1
+            ]
+        if tokenizer.special_tokens[tokenizer.EOS] in reference:
+            reference = reference[
+                : reference.index(tokenizer.special_tokens[tokenizer.EOS]) + 1
+            ]
 
         bleu += one(candidate, reference)
 
     return bleu / len(candidates)
 
 
-def seq2seq_decode(
+def translate_one_sentence(
     model: nn.Module,
     tokenizer: Tokenizer,
-    src: str,
-    max_tokens: int = 30,
+    sentence: str,
+    max_tokens: int = 20,
     device: str = "cpu",
     do_sample: bool = False,
     temperature: float = 1.0,
-    top_k: int = -1,
+    top_k=-1,
 ):
     if do_sample:
         assert (
             0 < temperature <= 2.0
         ), f"`temperature` must be between 0 and 2.0, received {temperature}"
 
-    model.to(device)
+    src_ids = torch.tensor([tokenizer(sentence)], device=device)
+    src_lens = torch.tensor([src_ids.shape[1]], dtype=torch.int64, device=device)
+    src_mask = create_pad_mask(src_lens)
 
-    src_ids = torch.tensor([tokenizer(src)]).to(device)
-    src_lens = torch.tensor([src_ids.shape[1]], dtype=torch.int64)
-    src_mask = create_pad_mask(src_lens).to(device)
-
-    tgt_ids = torch.tensor([[tokenizer._st2i[tokenizer.sos]]]).to(device)
-    tgt_lens = torch.tensor([1], dtype=torch.int64)
-    tgt_mask = create_subsequent_mask(tgt_lens, pad_mask=create_pad_mask(tgt_lens)).to(
-        device
-    )
+    tgt_ids = torch.tensor([[tokenizer.special_tokens[tokenizer.SOS]]], device=device)
+    tgt_lens = torch.tensor([1], dtype=torch.int64, device=device)
+    tgt_mask = create_subsequent_mask(tgt_lens, pad_mask=create_pad_mask(tgt_lens))
 
     with torch.inference_mode():
         encoder_outputs = model.encode(src_ids, src_mask)
-        while tgt_ids[0][-1] != tokenizer._st2i[tokenizer.eos] and max_tokens > 0:
+        while (
+            tgt_ids[0][-1] != tokenizer.special_tokens[tokenizer.EOS] and max_tokens > 0
+        ):
             next = model.generate(tgt_ids, tgt_mask, encoder_outputs, src_mask)[:, -1]
 
             if do_sample:
@@ -144,32 +150,7 @@ def seq2seq_decode(
             tgt_lens += 1
             tgt_mask = create_subsequent_mask(
                 tgt_lens, pad_mask=create_pad_mask(tgt_lens)
-            ).to(device)
+            )
             max_tokens -= 1
 
-    return tgt_ids
-
-
-def translate_one_sentence(
-    model: nn.Module,
-    tokenizer: Tokenizer,
-    device: str,
-    sentence: str,
-    max_tokens: int = 20,
-    do_sample: bool = False,
-    temperature: float = 1.0,
-    top_k=-1,
-):
-    model.eval()
-    ids = seq2seq_decode(
-        model,
-        tokenizer,
-        sentence,
-        max_tokens=max_tokens,
-        device=device,
-        do_sample=do_sample,
-        temperature=temperature,
-        top_k=top_k,
-    )[0].tolist()
-    model.train()
-    return "".join(tokenizer.decode(ids))
+    return "".join(tokenizer.decode(tgt_ids[0].tolist()))

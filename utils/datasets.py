@@ -67,7 +67,7 @@ class TextPairDataCollate:
                 x,
                 (0, length - x.shape[0]),
                 mode="constant",
-                value=self.tokenizer._st2i[self.tokenizer.pad],
+                value=self.tokenizer.special_tokens[self.tokenizer.PAD],
             )
             return x_padded
 

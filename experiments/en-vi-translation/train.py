@@ -78,7 +78,7 @@ training_args = TrainingArgs(
         batch,
         model,
         device,
-        nn.CrossEntropyLoss(ignore_index=tokenizer._st2i[tokenizer.pad]),
+        nn.CrossEntropyLoss(ignore_index=tokenizer.special_tokens[tokenizer.PAD]),
     ),
     train_dl=DataLoader(
         TextPairDataset(vi_en_ids["train"]["ids_en"], vi_en_ids["train"]["ids_vi"]),
@@ -117,10 +117,7 @@ for p in model.parameters():
 
 count_params(model)
 
-n_epochs = 1000
-n_accum_steps = 8
-optimizer = Adam(model.parameters(), lr=0.0004, betas=(0.98, 0.99), eps=1e-9)
-n_warmup_steps = 5000
+optimizer = Adam(model.parameters(), lr=0.0006, betas=(0.98, 0.99), eps=1e-9)
 scheduler = get_linear_schedule_with_warmup(
     optimizer,
     training_args.n_warmup_steps,
@@ -136,10 +133,10 @@ training_history, best_val_loss = train_and_val(
     training_args,
     model_name=model_name,
     infer_one_sample=lambda m: translate_one_sentence(
-        m,
-        tokenizer,
-        device,
-        "Once upon a day , he met her , but did n't know that the girl would change his entire life .",
+        model=m,
+        tokenizer=tokenizer,
+        sentence="Once upon a day , he met her , but did n't know that the girl would change his entire life .",
+        device=device,
     ),
 )
 
