@@ -95,7 +95,7 @@ class BPETokenizer(Tokenizer):
 
     def _compute_pair_freqs(
         self, chunk_freqs: Dict[str, int], splits: Dict[str, List[str]]
-    ) -> Dict[str, int]:
+    ) -> Dict[Tuple[str, str], int]:
         r"""Compute pair frequencies."""
         pair_freqs = defaultdict(int)
         for chunk, freq in chunk_freqs.items():
@@ -133,6 +133,8 @@ class BPETokenizer(Tokenizer):
         for c in list(set("".join(chunk_freqs.keys())))[:target_size]:
             self.vocab[len(self)] = c
 
+        num_merges = target_size - len(self)
+
         pbar = tqdm(
             desc="Building vocabulary...",
             initial=len(self),
@@ -140,7 +142,7 @@ class BPETokenizer(Tokenizer):
             disable=not verbose,
         )
 
-        while len(self) < target_size:
+        for _ in range(num_merges):
             pair_freqs = self._compute_pair_freqs(chunk_freqs, splits)
 
             if len(pair_freqs):
@@ -240,22 +242,176 @@ class BPETokenizer(Tokenizer):
 class ByteLevelBPETokenizer(Tokenizer):
     r"""Byte-level Byte-Pair Encoding Tokenizer for shared vocabulary."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        lower: bool = False,
+        split_pattern: str = r"\s?[^\s]+|\s*[\r\n]|\s+(?!\S)|\s+",
+    ):
         super().__init__()
+        self.lower = lower
+        self.split_pattern = split_pattern
+        self.merges = {}
+        self.special_tokens = {}
+
+    def _merge_pair(
+        self, pair: Tuple[int, int], splits: Dict[bytes, List[int]], new_id: int
+    ) -> Dict[bytes, List[int]]:
+        r"""Reflect the merge onto the splits."""
+        for bytes_chunk, split in splits.items():
+            i = 0
+            while i < len(split) - 1:
+                if (split[i], split[i + 1]) == pair:
+                    split = split[:i] + [new_id] + split[i + 2 :]
+                else:
+                    i += 1
+            splits[bytes_chunk] = split
+
+        return splits
+
+    def _compute_pair_freqs(
+        self, chunk_freqs: Dict[bytes, int], splits: Dict[bytes, List[int]]
+    ) -> Dict[Tuple[int, int], int]:
+        r"""Compute pair frequencies."""
+        pair_freqs = defaultdict(int)
+        for bytes_chunk, freq in chunk_freqs.items():
+            split = splits[bytes_chunk]
+            for p1, p2 in zip(split, split[1:]):
+                pair_freqs[(p1, p2)] += freq
+
+        return pair_freqs
+
+    def _prepare(
+        self, raw_text: str
+    ) -> Tuple[Dict[bytes, int], Dict[bytes, List[int]]]:
+        r"""Split the text into separated chunks and turn each chunk into a byte array."""
+        chunk_freqs = defaultdict(int)
+        splits = {}
+        for chunk in re.findall(self.split_pattern, raw_text):
+            bytes_chunk = chunk.encode("utf-8")
+            chunk_freqs[bytes_chunk] += 1
+
+            if bytes_chunk in splits:
+                continue
+
+            splits[bytes_chunk] = list(bytes_chunk)
+
+        return chunk_freqs, splits
 
     def build(
-        self, raw_corpus: List[str], target_size: int = 256, verbose: bool = False
+        self, raw_corpus: List[str], target_size: int = 512, verbose: bool = False
     ):
-        raise NotImplementedError
+        assert target_size > 256 + len(self)
+
+        raw_text = "\n".join(raw_corpus)
+        if self.lower:
+            raw_text = raw_text.lower()
+
+        chunk_freqs, splits = self._prepare(raw_text)
+
+        self.vocab = {idx: bytes([idx]) for idx in range(256)}
+        num_merges = target_size - len(self)
+
+        pbar = tqdm(
+            desc="Building vocabulary...",
+            initial=len(self),
+            total=target_size,
+            disable=not verbose,
+        )
+
+        for _ in range(num_merges):
+            pair_freqs = self._compute_pair_freqs(chunk_freqs, splits)
+
+            if len(pair_freqs):
+                best_pair = max(pair_freqs, key=pair_freqs.get)
+                new_id = len(self)
+                self.merges[best_pair] = new_id
+                self.vocab[new_id] = self.vocab[best_pair[0]] + self.vocab[best_pair[1]]
+                self._merge_pair(best_pair, splits, new_id)
+                pbar.update(1)
+            else:
+                warnings.warn("Not enough pair to merge. Stopping...")
+                break
+
+        self.special_tokens = {
+            token: i + len(self)
+            for i, token in enumerate([Tokenizer.PAD, Tokenizer.SOS, Tokenizer.EOS])
+        }
+
+    def _encode_chunk(self, ids: List[int]) -> List[int]:
+        r"""Do the actual encoding."""
+        while len(ids) >= 2:
+            stats = defaultdict(int)
+
+            for p1, p2 in zip(ids, ids[1:]):
+                stats[(p1, p2)] += 1
+
+            pair = min(stats, key=lambda p: self.merges.get(p, float("inf")))
+
+            if pair not in self.merges:
+                break
+
+            idx = 0
+            while idx < len(ids) - 1:
+                if (ids[idx], ids[idx + 1]) == pair:
+                    ids = ids[:idx] + [self.merges[pair]] + ids[idx + 2 :]
+                else:
+                    idx += 1
+        return ids
+
+    def _encode_ordinary(self, text: str) -> List[int]:
+        r"""Encode a text chunk that is not supposed to contain special tokens."""
+        chunks = re.findall(self.split_pattern, text)
+        ids = []
+        for chunk in chunks:
+            ids.extend(self._encode_chunk(list(chunk.encode("utf-8"))))
+
+        return ids
 
     def encode(self, text: str) -> List[int]:
-        raise NotImplementedError
+        if self.lower:
+            text = text.lower()
+
+        special_pattern = (
+            "(" + "|".join(re.escape(s) for s in self.special_tokens) + ")"
+        )
+        chunks = re.split(special_pattern, text)
+
+        ids = []
+        for chunk in chunks:
+            if chunk in self.special_tokens:
+                ids.append(self.special_tokens[chunk])
+            else:
+                ids.extend(self._encode_ordinary(chunk))
+
+        return ids
 
     def decode(self, ids: List[int]) -> str:
-        raise NotImplementedError
+        part_bytes = []
+        for id in ids:
+            if id in self.inverse_special_tokens:
+                part_bytes.append(self.inverse_special_tokens[id].encode("utf-8"))
+            elif id in self.vocab:
+                part_bytes.append(self.vocab[id])
+            else:
+                raise ValueError(f"Invalid token id: {id}")
+
+        return b"".join(part_bytes).decode("utf-8", errors="replace")
 
     def state_dict(self) -> Dict[str, Any]:
-        raise NotImplementedError
+        return {
+            "class_name": self.__class__.__name__,
+            "merges": self.merges,
+            "vocab": self.vocab,
+            "lower": self.lower,
+            "special_tokens": self.special_tokens,
+            "split_pattern": self.split_pattern,
+        }
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
-        raise NotImplementedError
+        self.merges = state_dict["merges"]
+        self.vocab = state_dict["vocab"]
+        self.lower = state_dict["lower"]
+        self.special_tokens = state_dict["special_tokens"]
+        self.split_pattern = state_dict["split_pattern"]
+
+        self.inverse_special_tokens = {v: k for k, v in self.special_tokens.items()}
