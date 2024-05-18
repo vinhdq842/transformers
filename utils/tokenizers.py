@@ -229,6 +229,8 @@ class BPETokenizer(Tokenizer):
         }
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
+        assert state_dict["class_name"] == self.__class__.__name__
+
         self.merges = state_dict["merges"]
         self.vocab = state_dict["vocab"]
         self.lower = state_dict["lower"]
@@ -408,6 +410,8 @@ class ByteLevelBPETokenizer(Tokenizer):
         }
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
+        assert state_dict["class_name"] == self.__class__.__name__
+
         self.merges = state_dict["merges"]
         self.vocab = state_dict["vocab"]
         self.lower = state_dict["lower"]

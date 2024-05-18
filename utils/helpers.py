@@ -116,7 +116,7 @@ def translate_one_sentence(
     do_sample: bool = False,
     temperature: float = 1.0,
     top_k=-1,
-):
+) -> str:
     if do_sample:
         assert (
             0 < temperature <= 2.0
@@ -153,4 +153,4 @@ def translate_one_sentence(
             )
             max_tokens -= 1
 
-    return "".join(tokenizer.decode(tgt_ids[0].tolist()))
+    return tokenizer.decode(tgt_ids[0].tolist())

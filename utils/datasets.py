@@ -1,6 +1,6 @@
 import torch
 from torch.nn.functional import pad
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, IterableDataset
 
 
 class TweetDataset(Dataset):
@@ -93,3 +93,21 @@ class TextPairDataCollate:
             self.pad(tgt, tgt=True),
             torch.LongTensor(tgt_lens),
         )
+
+
+class TextDatasetForCausalLM(IterableDataset):
+    def __init__(self, raw_ids: torch.Tensor, block_size: int):
+        self.raw_ids = raw_ids
+        self.block_size = block_size
+
+    def gen_sample(self):
+        idx = torch.randint(len(self.raw_ids) - self.block_size, (1,))
+        x, y = (
+            self.raw_ids[idx : idx + self.block_size],
+            self.raw_ids[idx + 1 : idx + self.block_size + 1],
+        )
+
+        yield (x, y, len(x), len(y))
+
+    def __iter__(self):
+        return self.gen_sample()
